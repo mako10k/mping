@@ -273,6 +273,39 @@ timespec_cmp (struct timespec a, struct timespec b)
 }
 #endif
 
+static struct timespec
+timespec_zero ()
+{
+  struct timespec ret = { 0, 0 };
+  return ret;
+}
+
+static void
+ping_showrecv (struct ping_context *pc, int idx)
+{
+  struct ping_info *pi = pc->info + idx;
+  char daddr[INET_ADDRSTRLEN];
+  char saddr[INET_ADDRSTRLEN];
+  struct timespec rtt = (pi->time_recv.tv_sec == 0
+			 && pi->time_recv.tv_nsec ==
+			 0) ? timespec_zero () : timespec_sub (pi->time_recv,
+							       pi->time_sent);
+  const char *daddr_name;
+  const char *saddr_name;
+
+  if (pi->daddr_recv.sin_addr.s_addr == INADDR_ANY)
+    daddr_name = "-";
+  else
+    daddr_name =
+      inet_ntop (AF_INET, &pi->daddr_recv.sin_addr, daddr, sizeof (daddr));
+
+  saddr_name =
+    inet_ntop (AF_INET, &pi->saddr_recv.sin_addr, saddr, sizeof (saddr));
+
+  printf ("%s %s %ld.%06ld %d\n", daddr_name, saddr_name, rtt.tv_sec,
+	  rtt.tv_nsec / 1000, pi->count_recv);
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -438,7 +471,16 @@ main (int argc, char *argv[])
 	    }
 
 	  if (FD_ISSET (ctx.timeoutfd, &rfds))
-	    break;
+	    {
+	      for (int i = 0; i < ctx.infolen; i++)
+		if (ctx.info[i].count_recv == 0)
+		  {
+		    memcpy (&ctx.info[i].saddr_recv, &ctx.info[i].addr_sent,
+			    sizeof (ctx.info->addr_sent));
+		    ping_showrecv (&ctx, i);
+		  }
+	      break;
+	    }
 
 	  if (FD_ISSET (ctx.sock, &rfds))
 	    {
@@ -450,20 +492,8 @@ main (int argc, char *argv[])
 		  perror ("icmp_echoreply_recv");
 		  break;
 		}
-	      struct ping_info *pi = ctx.info + idx;
-	      pi->count_recv++;
-	      struct timespec rtt =
-		timespec_sub (pi->time_recv, pi->time_sent);
-	      char daddr[INET_ADDRSTRLEN];
-	      char saddr[INET_ADDRSTRLEN];
-	      printf ("%s %s %ld.%06ld %d\n",
-		      inet_ntop (AF_INET, &pi->daddr_recv.sin_addr, daddr,
-				 sizeof (daddr)), inet_ntop (AF_INET,
-							     &pi->
-							     saddr_recv.sin_addr,
-							     saddr,
-							     sizeof (saddr)),
-		      rtt.tv_sec, rtt.tv_nsec / 1000, pi->count_recv);
+	      ctx.info[idx].count_recv++;
+	      ping_showrecv (&ctx, idx);
 	    }
 
 	  int count_recvs = 0;
