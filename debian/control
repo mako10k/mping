@@ -1,0 +1,12 @@
+Source: mping
+Section: utils
+Priority: optional
+Maintainer: Makoto Katsumata <katsumata-m@t-axis.co.jp>
+Build-Depends: debhelper, dh-autoreconf
+Standards-Version: 4.1.4
+
+Package: mping
+Architecture: any
+Depends: libcap2-bin, ${misc:Depends}, ${shlibs:Depends}
+Description: Multiple Ping Utitily
+  This utility to ping fast many destinations.

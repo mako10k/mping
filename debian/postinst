@@ -1,0 +1,4 @@
+#!/bin/bash
+
+set -e
+setcap CAP_NET_RAW+eip /usr/bin/mping
