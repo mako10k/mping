@@ -193,6 +193,9 @@ icmp_echoreply_recv (struct ping_context *ctx)
 	  return i;
 	}
     }
+
+  // 応答が要求と異なる
+  errno = EAGAIN;
   return -1;
 }
 
