@@ -139,17 +139,17 @@ icmp_echoreply_recv (struct ping_context *ctx)
   struct sockaddr_in sin;
 
   memset (&msghdr, 0, sizeof (msghdr));
-  // 送信情報の作成
+  // 受信情報の作成
   iov[0].iov_base = &iphdr;
   iov[0].iov_len = sizeof (iphdr);
   iov[1].iov_base = &icmphdr;
   iov[1].iov_len = sizeof (icmphdr);
-  iov[2].iov_base = buf;
-  iov[2].iov_len = sizeof (buf);
+  iov[2].iov_base = data;
+  iov[2].iov_len = sizeof (data);
   msghdr.msg_name = &sin;
   msghdr.msg_namelen = sizeof (struct sockaddr_in);
   msghdr.msg_iov = iov;
-  msghdr.msg_iovlen = 2;
+  msghdr.msg_iovlen = 3;
   msghdr.msg_control = NULL;
   msghdr.msg_controllen = 0;
   msghdr.msg_flags = 0;
