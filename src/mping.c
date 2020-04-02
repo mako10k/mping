@@ -57,12 +57,8 @@ checksum (struct iovec *iov, size_t iovlen)
   int k = 0;
 
   for (int i = 0; i < iovlen; i++)
-    {
-      for (int j = 0; j < iov[i].iov_len; j++)
-	{
-	  sum += ((char *) iov[i].iov_base)[j] << (8 * (k++ & 1));
-	}
-    }
+    for (int j = 0; j < iov[i].iov_len; j++)
+      sum += ((char *) iov[i].iov_base)[j] << (8 * (k++ & 1));
   sum = (sum & 65535) + (sum >> 16);
   sum = (sum & 65535) + (sum >> 16);
   return ~sum;
