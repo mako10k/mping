@@ -341,8 +341,18 @@ main (int argc, char *argv[])
   char *p;
   struct timespec to_spec = { 1, 0 };
   struct timespec in_spec = { 0, 10000000 };
+  int datalen = 56;
+  char *data = malloc (datalen);
 
-  while ((opt = getopt (argc, argv, "w:i:vh")) != -1)
+  if (data == NULL)
+    {
+      perror ("malloc");
+      exit (EXIT_FAILURE);
+    }
+  for (int i = 0; i < datalen; i++)
+    data[i] = 32 + i % (32 - 127);
+
+  while ((opt = getopt (argc, argv, "w:i:s:d:vh")) != -1)
     {
       switch (opt)
 	{
@@ -366,6 +376,46 @@ main (int argc, char *argv[])
 	  in_spec.tv_sec = opt_double;
 	  in_spec.tv_nsec = (opt_double - in_spec.tv_sec) * 1000000000;
 	  break;
+	case 's':
+	  datalen = strtol (optarg, &p, 0);
+	  if (p == optarg || *p != '\0')
+	    {
+	      fprintf (stderr, "error argument -%c %s\n", opt, optarg);
+	      exit (EXIT_FAILURE);
+	    }
+	  if (datalen < 0 || datalen > MAX_DATALEN)
+	    {
+	      fprintf (stderr, "packet size must be between 0 and %d\n",
+		       MAX_DATALEN);
+	      exit (EXIT_FAILURE);
+	    }
+	  data = realloc (data, datalen);
+	  if (datalen > 0 && data == NULL)
+	    {
+	      perror ("realloc");
+	      exit (EXIT_FAILURE);
+	    }
+	  for (int i = 0; i < datalen; i++)
+	    data[i] = 32 + i % (32 - 127);
+	  break;
+
+	case 'd':
+	  datalen = strlen (optarg);
+	  if (datalen < 0 || datalen > MAX_DATALEN)
+	    {
+	      fprintf (stderr, "packet size must be between 0 and %d\n",
+		       MAX_DATALEN);
+	      exit (EXIT_FAILURE);
+	    }
+	  data = realloc (data, datalen);
+	  if (datalen > 0 && data == NULL)
+	    {
+	      perror ("realloc");
+	      exit (EXIT_FAILURE);
+	    }
+	  strcpy (data, optarg);
+	  break;
+
 	case 'v':
 	  print_version (stdout, argc, argv);
 	  exit (EXIT_SUCCESS);
@@ -460,9 +510,6 @@ main (int argc, char *argv[])
 		}
 	      for (int i = 0; i < count; i++)
 		{
-		  static char data[] = "0123456789";
-		  size_t datalen = sizeof (data);
-
 		  if (ctx.sndidx >= ctx.infolen)
 		    {
 		      struct itimerspec it_to;
