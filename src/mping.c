@@ -543,6 +543,8 @@ main (int argc, char *argv[])
 		      break;
 		    }
 		}
+	      if (exitcode != EXIT_SUCCESS)
+		break;
 	    }
 
 	  if (FD_ISSET (ctx.timeoutfd, &rfds))
