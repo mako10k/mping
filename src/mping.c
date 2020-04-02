@@ -20,6 +20,10 @@
 
 #include "config.h"
 
+#ifndef ICMP_FILTER
+#define ICMP_FILTER 1
+#endif
+
 struct ping_info
 {
   struct sockaddr_in addr_sent;
@@ -62,18 +66,18 @@ checksum (struct iovec *iov, size_t iovlen)
   return ~sum;
 }
 
-#ifndef ICMP_FILTER
-#define ICMP_FILTER 1
-#endif
-
 static int
 icmp_setopt (struct ping_context *ctx)
 {
-  int flag = ~(1 << ICMP_ECHO | 1 << ICMP_ECHOREPLY);
+  int flag;
+
+#ifdef ICMP_FILTER
+  flag = ~(1 << ICMP_ECHO | 1 << ICMP_ECHOREPLY);
   int ret = setsockopt (ctx->sock, IPPROTO_RAW, ICMP_FILTER, &flag,
 			sizeof (flag));
   if (ret != 0)
     return ret;
+#endif
   flag = 0;
   return setsockopt (ctx->sock, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
 }
