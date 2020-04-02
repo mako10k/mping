@@ -91,7 +91,7 @@ icmp_echo_send (struct ping_context *ctx, char *data, size_t datalen)
   // 送信情報の組み立て
   pi = ctx->info + ctx->sndidx;
 
-  // ヘッダ情報 
+  // ヘッダ情報
   pi->icmphdr_sent.type = ICMP_ECHO;
   pi->icmphdr_sent.code = 0;
   pi->icmphdr_sent.checksum = 0;
