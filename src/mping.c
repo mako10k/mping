@@ -24,6 +24,8 @@
 #define ICMP_FILTER 1
 #endif
 
+#define MAX_DATALEN (65535-sizeof(struct iphdr)-sizeof(struct icmphdr))
+
 struct ping_info
 {
   struct sockaddr_in addr_sent;
@@ -135,7 +137,7 @@ icmp_echoreply_recv (struct ping_context *ctx)
 {
   struct iphdr iphdr;
   struct icmphdr icmphdr;
-  char buf[65536 - sizeof (iphdr) - sizeof (icmphdr)];
+  char data[MAX_DATALEN];
   struct msghdr msghdr;
   struct iovec iov[3];
   struct sockaddr_in sin;
