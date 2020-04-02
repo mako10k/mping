@@ -18,6 +18,8 @@
 
 #include <arpa/inet.h>
 
+#include "config.h"
+
 struct ping_info
 {
   struct sockaddr_in addr_sent;
@@ -306,6 +308,14 @@ ping_showrecv (struct ping_context *pc, int idx)
 	  rtt.tv_nsec / 1000, pi->count_recv);
 }
 
+static void
+print_version (FILE * fp, int argc, char *argv[])
+{
+  fprintf (fp, "%s in %s (bug-report: %s)\n", basename (argv[0]),
+	   PACKAGE_STRING, PACKAGE_BUGREPORT);
+  fprintf (fp, "\n");
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -342,9 +352,10 @@ main (int argc, char *argv[])
 	  in_spec.tv_nsec = (opt_double - in_spec.tv_sec) * 1000000000;
 	  break;
 	case 'v':
+	  print_version (stdout, argc, argv);
+	  exit (EXIT_SUCCESS);
 	case 'h':
-	  printf ("%s version 0.1\n", argv[0]);
-	  printf ("\n");
+	  print_version (stdout, argc, argv);
 	  if (opt != 'h')
 	    exit (EXIT_SUCCESS);
 	  printf ("Usage:\n");
