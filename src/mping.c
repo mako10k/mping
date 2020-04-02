@@ -441,8 +441,14 @@ main (int argc, char *argv[])
       struct ping_info *pi = ctx.info + i;
       int ret =
 	inet_pton (AF_INET, argv[i + optind], &pi->addr_sent.sin_addr);
-      if (ret != 1)
+      switch (ret)
 	{
+	case 1:		// SUCCESS
+	  break;
+	case 0:		// Parse Error
+	  fprintf (stderr, "invalid address %s\n", argv[i + optind]);
+	  exit (EXIT_FAILURE);
+	case -1:		// Other error
 	  perror (argv[i + optind]);
 	  exit (EXIT_FAILURE);
 	}
