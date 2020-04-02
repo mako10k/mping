@@ -321,6 +321,16 @@ print_version (FILE * fp, int argc, char *argv[])
   fprintf (fp, "\n");
 }
 
+static void
+print_usage (FILE * fp, int argc, char *argv[])
+{
+  fprintf (fp, "Usage:\n");
+  fprintf (fp,
+	   "  %s [-w timeout] [-i interval] [-s size] [-d data] ipaddr ...\n",
+	   argv[0]);
+  fprintf (fp, "\n");
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -361,11 +371,7 @@ main (int argc, char *argv[])
 	  exit (EXIT_SUCCESS);
 	case 'h':
 	  print_version (stdout, argc, argv);
-	  if (opt != 'h')
-	    exit (EXIT_SUCCESS);
-	  printf ("Usage:\n");
-	  printf ("  %s [-w timeout] [-i interval] ipaddr ...\n", argv[0]);
-	  printf ("\n");
+	  print_usage (stdout, argc, argv);
 	  exit (EXIT_SUCCESS);
 	default:
 	  exit (EXIT_FAILURE);
