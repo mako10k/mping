@@ -1,3 +1,9 @@
+mping (0.1.1-2) unstable; urgency=medium
+
+  * fix bugs and add ICMP ECHO data options
+
+ -- MAINTAINER <katsumata-m@t-axis.co.jp>  Thu, 02 Apr 2020 21:13:17 +0900
+
 mping (0.1.0-1) unstable; urgency=medium
 
   * Initial release.
