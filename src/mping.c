@@ -27,7 +27,8 @@
 #define ICMP_FILTER 1
 #endif
 
-#define MAX_DATALEN (65535-sizeof(struct iphdr)-sizeof(struct icmphdr))
+#define MAX_DATALEN4 (65535-sizeof(struct iphdr)-sizeof(struct icmphdr))
+#define MAX_DATALEN6 (65535-sizeof(struct ip6_hdr)-sizeof(struct icmp6_hdr))
 
 struct ping_info
 {
@@ -222,7 +223,7 @@ icmp4_echoreply_recv (struct ping_context *ctx)
 {
   struct iphdr iphdr;
   struct icmphdr icmphdr;
-  char data[MAX_DATALEN];
+  char data[MAX_DATALEN4];
   struct msghdr msghdr;
   struct iovec iov[3];
   struct sockaddr_in sin;
@@ -293,7 +294,7 @@ static int
 icmp6_echoreply_recv (struct ping_context *ctx)
 {
   struct icmp6_hdr icmp6_hdr;
-  char data[MAX_DATALEN];
+  char data[MAX_DATALEN6];
   struct msghdr msghdr;
   struct iovec iov[2];
   struct sockaddr_in6 sin6;
@@ -578,10 +579,10 @@ main (int argc, char *argv[])
 	      fprintf (stderr, "error argument -%c %s\n", opt, optarg);
 	      exit (EXIT_FAILURE);
 	    }
-	  if (datalen < 0 || datalen > MAX_DATALEN)
+	  if (datalen < 0 || datalen > 65536)
 	    {
 	      fprintf (stderr, "packet size must be between 0 and %d\n",
-		       MAX_DATALEN);
+		       65536);
 	      exit (EXIT_FAILURE);
 	    }
 	  data = realloc (data, datalen);
@@ -596,10 +597,10 @@ main (int argc, char *argv[])
 
 	case 'd':
 	  datalen = strlen (optarg);
-	  if (datalen < 0 || datalen > MAX_DATALEN)
+	  if (datalen < 0 || datalen > 65536)
 	    {
 	      fprintf (stderr, "packet size must be between 0 and %d\n",
-		       MAX_DATALEN);
+		       65536);
 	      exit (EXIT_FAILURE);
 	    }
 	  data = realloc (data, datalen);
