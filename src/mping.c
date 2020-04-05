@@ -6,6 +6,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -493,6 +494,38 @@ print_usage (FILE * fp, int argc, char *argv[])
   fprintf (fp, "\n");
 }
 
+static int
+get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen)
+{
+  struct addrinfo *addrinfo, hints, *ai;
+  int err;
+
+  memset (&hints, 0, sizeof (hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_RAW;
+  hints.ai_protocol = 0;
+
+  if ((err = getaddrinfo (node, NULL, &hints, &addrinfo)) != 0)
+    {
+      fprintf (stderr, "%s: %s\n", node, gai_strerror (err));
+      errno = 0;
+      return -1;
+    }
+  ai = addrinfo;
+  if (*saddrlen >= ai->ai_addrlen)
+    {
+      memcpy (saddr, ai->ai_addr, ai->ai_addrlen);
+      *saddrlen = ai->ai_addrlen;
+    }
+  else
+    {
+      errno = ENOSPC;
+      return -1;
+    }
+  freeaddrinfo (addrinfo);
+  return 0;
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -601,29 +634,31 @@ main (int argc, char *argv[])
   for (int i = 0; i < ctx.infolen; i++)
     {
       struct ping_info *pi = ctx.info + i;
-      int ret = inet_pton (AF_INET, argv[i + optind], &pi->addr_sent);
-      switch (ret)
+      union
+      {
+	struct sockaddr saddr;
+	struct sockaddr_in addr4;
+	struct sockaddr_in6 addr6;
+      } addr;
+      socklen_t addrlen = sizeof (addr);
+      if (get_addr (argv[optind + i], &addr.saddr, &addrlen) == -1)
 	{
-	case 1:		// SUCCESS
+	  if (errno)
+	    perror (argv[optind + i]);
+	  exit (EXIT_FAILURE);
+	}
+      switch (addr.saddr.sa_family)
+	{
+	case AF_INET:
 	  pi->pi_family = AF_INET;
+	  pi->addr4_sent = addr.addr4.sin_addr;
 	  break;
-	case 0:		// Parse Error
-	  ret = inet_pton (AF_INET6, argv[i + optind], &pi->addr_sent);
-	  switch (ret)
-	    {
-	    case 1:
-	      pi->pi_family = AF_INET6;
-	      break;
-	    case 0:
-	      fprintf (stderr, "invalid address %s\n", argv[i + optind]);
-	      exit (EXIT_FAILURE);
-	    case -1:
-	      perror (argv[i + optind]);
-	      exit (EXIT_FAILURE);
-	    }
+	case AF_INET6:
+	  pi->pi_family = AF_INET6;
+	  pi->addr6_sent = addr.addr6.sin6_addr;
 	  break;
-	case -1:		// Other error
-	  perror (argv[i + optind]);
+	default:
+	  fprintf (stderr, "FATAL: unexpected family\n");
 	  exit (EXIT_FAILURE);
 	}
     }
