@@ -21,6 +21,8 @@
 
 #include <arpa/inet.h>
 
+#include <asyncns.h>
+
 #include "config.h"
 
 #ifndef ICMP_FILTER
@@ -49,12 +51,15 @@ struct ping_info
   struct ping_addr daddr_send;
   int id;
   int seq;
+  asyncns_query_t *asyncns_name_query;
 };
 
 struct ping_context
 {
   int sock4;
   int sock6;
+  asyncns_t *asyncns;
+  int asyncnsfd;
   int timeoutfd;
   int intervalfd;
   int id;
@@ -313,11 +318,21 @@ ping_context_new (struct ping_context *pc)
       errno = _errno;
       return -1;
     }
+  pc->asyncns = asyncns_new (2);
+  if (pc->asyncns == NULL)
+    {
+      int _errno = errno;
+      close (pc->sock4);
+      errno = _errno;
+      return -1;
+    }
+  pc->asyncnsfd = asyncns_fd (pc->asyncns);
   if (icmp_setopt (pc) == -1)
     {
       int _errno = errno;
       close (pc->sock4);
       close (pc->sock6);
+      asyncns_free (pc->asyncns);
       errno = _errno;
       return -1;
     }
@@ -327,6 +342,7 @@ ping_context_new (struct ping_context *pc)
       int _errno = errno;
       close (pc->sock4);
       close (pc->sock6);
+      asyncns_free (pc->asyncns);
       errno = _errno;
       return -1;
     }
@@ -337,6 +353,7 @@ ping_context_new (struct ping_context *pc)
       close (pc->sock4);
       close (pc->sock6);
       close (pc->timeoutfd);
+      asyncns_free (pc->asyncns);
       errno = _errno;
       return -1;
     }
@@ -352,7 +369,9 @@ ping_context_destory (struct ping_context *pc)
 {
   close (pc->sock4);
   close (pc->sock6);
-  close (pc->timeoutfd);
+  asyncns_free (pc->asyncns);
+  if (pc->timeoutfd != -1)
+    close (pc->timeoutfd);
   if (pc->intervalfd != -1)
     close (pc->intervalfd);
 }
@@ -407,7 +426,18 @@ timespec_zero ()
 }
 
 static void
-ping_showrecv (struct ping_context *pc, int idx)
+ping_showrecv_prepare (struct ping_context *pc, int idx)
+{
+  struct ping_info *pi = pc->info + idx;
+
+  if ((pi->asyncns_name_query =
+       asyncns_getnameinfo (pc->asyncns, &pi->daddr_send.addr,
+			    pi->daddr_send.addrlen, 0, 1, 0)) == NULL)
+    perror ("asyncns_getnameinfo");
+}
+
+static void
+ping_showrecv_done (struct ping_context *pc, int idx)
 {
   struct ping_info *pi = pc->info + idx;
   struct timespec rtt = (pi->time_recv.tv_sec == 0
@@ -415,18 +445,28 @@ ping_showrecv (struct ping_context *pc, int idx)
 			 0) ? timespec_zero () : timespec_sub (pi->time_recv,
 							       pi->time_sent);
   char saddr_name[NI_MAXHOST];
-  int err;
 
-  if ((err =
-       getnameinfo (&pi->daddr_send.addr, pi->daddr_send.addrlen, saddr_name,
-		    sizeof (saddr_name), NULL, 0, 0)) != 0)
+  if (pi->asyncns_name_query == NULL)
+    strcpy (saddr_name, "???");
+  else
     {
-      fprintf (stderr, "%s\n", gai_strerror (err));
-      strcpy (saddr_name, "???");
+      int err = asyncns_getnameinfo_done (pc->asyncns, pi->asyncns_name_query,
+					  saddr_name, sizeof (saddr_name),
+					  NULL, 0);
+      if (err == EAI_AGAIN)
+	return;
+      if (err != 0)
+	{
+	  fprintf (stderr, "asyncns_getnameinfo_done: %s\n",
+		   gai_strerror (err));
+	  strcpy (saddr_name, "???");
+	}
     }
 
+  pi->asyncns_name_query = NULL;
   printf ("%s %ld.%06ld %d\n", saddr_name, rtt.tv_sec,
 	  rtt.tv_nsec / 1000, pi->count_recv);
+  if (pi->count_recv == 0) pi->count_recv = 1;
 }
 
 static void
@@ -626,9 +666,18 @@ main (int argc, char *argv[])
 	  FD_SET (ctx.sock6, &rfds);
 	  if (nfds < ctx.sock6)
 	    nfds = ctx.sock6;
-	  FD_SET (ctx.timeoutfd, &rfds);
-	  if (nfds < ctx.timeoutfd)
-	    nfds = ctx.timeoutfd;
+	  if (asyncns_getnqueries (ctx.asyncns) > 0)
+	    {
+	      FD_SET (ctx.asyncnsfd, &rfds);
+	      if (nfds < ctx.asyncnsfd)
+		nfds = ctx.asyncnsfd;
+	    }
+	  if (ctx.timeoutfd != -1)
+	    {
+	      FD_SET (ctx.timeoutfd, &rfds);
+	      if (nfds < ctx.timeoutfd)
+		nfds = ctx.timeoutfd;
+	    }
 	  if (ctx.intervalfd != -1)
 	    {
 	      FD_SET (ctx.intervalfd, &rfds);
@@ -644,6 +693,23 @@ main (int argc, char *argv[])
 	      break;
 	    }
 
+	  if (FD_ISSET (ctx.asyncnsfd, &rfds))
+	    {
+	      if (asyncns_wait (ctx.asyncns, 0) < 0)
+		perror ("asyncns_wait");
+	      else
+		{
+		  asyncns_query_t *query;
+
+		  while ((query = asyncns_getnext (ctx.asyncns)) != NULL)
+		    for (int i = 0; i < ctx.sndidx; i++)
+		      if (query == ctx.info[i].asyncns_name_query)
+			{
+			  ping_showrecv_done (&ctx, i);
+			  break;
+			}
+		}
+	    }
 	  if (ctx.intervalfd != -1 && FD_ISSET (ctx.intervalfd, &rfds))
 	    {
 	      uint64_t count;
@@ -697,8 +763,9 @@ main (int argc, char *argv[])
 	    {
 	      for (int i = 0; i < ctx.infolen; i++)
 		if (ctx.info[i].count_recv == 0)
-		  ping_showrecv (&ctx, i);
-	      break;
+		  ping_showrecv_prepare (&ctx, i);
+	      close (ctx.timeoutfd);
+	      ctx.timeoutfd = -1;
 	    }
 
 	  if (FD_ISSET (ctx.sock4, &rfds))
@@ -707,12 +774,12 @@ main (int argc, char *argv[])
 	      if (idx == -1)
 		{
 		  if (errno == EAGAIN)
-		    continue;
+		    goto next;
 		  perror ("icmp_echoreply_recv");
 		  break;
 		}
-	      ctx.info[idx].count_recv++;
-	      ping_showrecv (&ctx, idx);
+              ctx.info[idx].count_recv ++;
+	      ping_showrecv_prepare (&ctx, idx);
 	    }
 
 	  if (FD_ISSET (ctx.sock6, &rfds))
@@ -721,20 +788,22 @@ main (int argc, char *argv[])
 	      if (idx == -1)
 		{
 		  if (errno == EAGAIN)
-		    continue;
+		    goto next;
 		  perror ("icmp_echoreply_recv");
 		  break;
 		}
-	      ctx.info[idx].count_recv++;
-	      ping_showrecv (&ctx, idx);
+              ctx.info[idx].count_recv ++;
+	      ping_showrecv_prepare (&ctx, idx);
 	    }
 
-	  int count_recvs = 0;
-	  for (int i = 0; i < ctx.infolen; i++)
-	    if (ctx.info[i].count_recv > 0)
-	      count_recvs++;
-	  if (count_recvs >= ctx.infolen)
-	    break;
+	next:{
+	    int count_recvs = 0;
+	    for (int i = 0; i < ctx.infolen; i++)
+	      if (ctx.info[i].count_recv > 0)
+		count_recvs++;
+	    if (count_recvs >= ctx.infolen)
+	      break;
+	  }
 	}
       while (1);
     }
