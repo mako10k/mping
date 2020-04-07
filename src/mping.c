@@ -30,62 +30,25 @@
 #define MAX_DATALEN4 (65535-sizeof(struct iphdr)-sizeof(struct icmphdr))
 #define MAX_DATALEN6 (65535-sizeof(struct ip6_hdr)-sizeof(struct icmp6_hdr))
 
+struct ping_addr
+{
+  union
+  {
+    struct sockaddr addr;
+    struct sockaddr_in addr4;
+    struct sockaddr_in6 addr6;
+  };
+  socklen_t addrlen;
+};
+
 struct ping_info
 {
   struct timespec time_sent;
   struct timespec time_recv;
   int count_recv;
-  int pi_family;
-  union
-  {
-    struct in_addr addr4_sent;
-    struct in6_addr addr6_sent;
-    union
-    {
-      struct in_addr addr4_sent;
-      struct in6_addr addr6_sent;
-    } addr_sent;
-  };
-  union
-  {
-    struct icmphdr icmp4_hdr_sent;
-    struct icmp6_hdr icmp6_hdr_sent;
-    union
-    {
-      struct icmphdr icmp4_hdr_sent;
-      struct icmp6_hdr icmp6_hdr_sent;
-    } icmp_hdr_sent;
-  };
-  union
-  {
-    struct in_addr saddr4_recv;
-    struct in6_addr saddr6_recv;
-    union
-    {
-      struct in_addr saddr4_recv;
-      struct in6_addr saddr6_recv;
-    } saddr_recv;
-  };
-  union
-  {
-    struct in_addr daddr4_recv;
-    struct in6_addr daddr6_recv;
-    union
-    {
-      struct in_addr daddr4_recv;
-      struct in6_addr daddr6_recv;
-    } daddr_recv;
-  };
-  union
-  {
-    struct icmphdr icmp4_hdr_recv;
-    struct icmp6_hdr icmp6_hdr_recv;
-    union
-    {
-      struct icmphdr icmp4_hdr_recv;
-      struct icmp6_hdr icmp6_hdr_recv;
-    } icmp_hdr_recv;
-  };
+  struct ping_addr daddr_send;
+  int id;
+  int seq;
 };
 
 struct ping_context
@@ -142,61 +105,53 @@ icmp_echo_send (struct ping_context *ctx, char *data, size_t datalen)
   struct iovec iov[2];
   struct ping_info *pi;
   ssize_t ret;
-  union
-  {
-    struct sockaddr_in s4addr;
-    struct sockaddr_in6 s6addr;
-  } saddr;
+  struct icmphdr icmphdr;
+  struct icmp6_hdr icmp6_hdr;
 
   // 送信情報の組み立て
   pi = ctx->info + ctx->sndidx;
 
+  pi->id = ctx->id;
+  pi->seq = 0;
+
   // ヘッダ情報
-  switch (pi->pi_family)
+  switch (pi->daddr_send.addr.sa_family)
     {
     case AF_INET:
-      pi->icmp4_hdr_sent.type = ICMP_ECHO;
-      pi->icmp4_hdr_sent.code = 0;
-      pi->icmp4_hdr_sent.checksum = 0;
-      pi->icmp4_hdr_sent.un.echo.id = htons (ctx->id);
-      pi->icmp4_hdr_sent.un.echo.sequence = 0;
+      icmphdr.type = ICMP_ECHO;
+      icmphdr.code = 0;
+      icmphdr.checksum = 0;
+      icmphdr.un.echo.id = htons (pi->id);
+      icmphdr.un.echo.sequence = htons (pi->seq);
 
       // 送信情報の作成
-      iov[0].iov_base = &pi->icmp4_hdr_sent;
-      iov[0].iov_len = sizeof (pi->icmp4_hdr_sent);
+      iov[0].iov_base = &icmphdr;
+      iov[0].iov_len = sizeof (icmphdr);
       iov[1].iov_base = data;
       iov[1].iov_len = datalen;
       // チェックサムの計算
-      pi->icmp4_hdr_sent.checksum = checksum (iov, 2);
+      icmphdr.checksum = checksum (iov, 2);
 
-      saddr.s4addr.sin_family = AF_INET;
-      saddr.s4addr.sin_addr = pi->addr4_sent;
-      saddr.s4addr.sin_port = 0;
-      msghdr.msg_name = &saddr;
-      msghdr.msg_namelen = sizeof (saddr.s4addr);
       break;
     case AF_INET6:
-      pi->icmp6_hdr_sent.icmp6_type = ICMP6_ECHO_REQUEST;
-      pi->icmp6_hdr_sent.icmp6_code = 0;
-      pi->icmp6_hdr_sent.icmp6_cksum = 0;
-      pi->icmp6_hdr_sent.icmp6_id = htons (ctx->id);
-      pi->icmp6_hdr_sent.icmp6_seq = 0;
+      icmp6_hdr.icmp6_type = ICMP6_ECHO_REQUEST;
+      icmp6_hdr.icmp6_code = 0;
+      icmp6_hdr.icmp6_cksum = 0;
+      icmp6_hdr.icmp6_id = htons (pi->id);
+      icmp6_hdr.icmp6_seq = htons (pi->seq);
 
       // 送信情報の作成
-      iov[0].iov_base = &pi->icmp6_hdr_sent;
-      iov[0].iov_len = sizeof (pi->icmp6_hdr_sent);
+      iov[0].iov_base = &icmp6_hdr;
+      iov[0].iov_len = sizeof (icmp6_hdr);
       iov[1].iov_base = data;
       iov[1].iov_len = datalen;
       // チェックサムの計算
-      pi->icmp6_hdr_sent.icmp6_cksum = checksum (iov, 2);
+      icmp6_hdr.icmp6_cksum = checksum (iov, 2);
 
-      saddr.s6addr.sin6_family = AF_INET6;
-      saddr.s6addr.sin6_addr = pi->addr6_sent;
-      saddr.s6addr.sin6_port = 0;
-      msghdr.msg_name = &saddr;
-      msghdr.msg_namelen = sizeof (saddr.s6addr);
       break;
     }
+  msghdr.msg_name = &pi->daddr_send.addr;
+  msghdr.msg_namelen = pi->daddr_send.addrlen;
   msghdr.msg_iov = iov;
   msghdr.msg_iovlen = 2;
   msghdr.msg_control = NULL;
@@ -209,7 +164,8 @@ icmp_echo_send (struct ping_context *ctx, char *data, size_t datalen)
 
   // 送信
   ret =
-    sendmsg (pi->pi_family == AF_INET ? ctx->sock4 : ctx->sock6, &msghdr, 0);
+    sendmsg (pi->daddr_send.addr.sa_family ==
+	     AF_INET ? ctx->sock4 : ctx->sock6, &msghdr, 0);
   if (ret != -1)
     {
       ctx->id++;
@@ -271,16 +227,11 @@ icmp4_echoreply_recv (struct ping_context *ctx)
     {
       struct ping_info *pi = ctx->info + i;
 
-      if (pi->pi_family != AF_INET)
-	continue;
-      if (icmphdr.un.echo.id == pi->icmp4_hdr_sent.un.echo.id
-	  && icmphdr.un.echo.sequence == pi->icmp4_hdr_sent.un.echo.sequence)
+      if (icmphdr.un.echo.id == htons (pi->id)
+	  && icmphdr.un.echo.sequence == htons (pi->seq))
 	{
 	  if (ioctl (ctx->sock4, SIOCGSTAMPNS, &pi->time_recv) != 0)
 	    return -1;
-	  memcpy (&pi->icmp4_hdr_recv, &icmphdr, sizeof (icmphdr));
-	  memcpy (&pi->saddr4_recv, &iphdr.saddr, sizeof (iphdr.saddr));
-	  memcpy (&pi->daddr4_recv, &iphdr.daddr, sizeof (iphdr.daddr));
 	  return i;
 	}
     }
@@ -334,15 +285,11 @@ icmp6_echoreply_recv (struct ping_context *ctx)
     {
       struct ping_info *pi = ctx->info + i;
 
-      if (pi->pi_family != AF_INET6)
-	continue;
-      if (icmp6_hdr.icmp6_id == pi->icmp6_hdr_sent.icmp6_id
-	  && icmp6_hdr.icmp6_seq == pi->icmp6_hdr_sent.icmp6_seq)
+      if (icmp6_hdr.icmp6_id == htons (pi->id)
+	  && icmp6_hdr.icmp6_seq == htons (pi->seq))
 	{
 	  if (ioctl (ctx->sock6, SIOCGSTAMPNS, &pi->time_recv) != 0)
 	    return -1;
-	  memcpy (&pi->icmp6_hdr_recv, &icmp6_hdr, sizeof (icmp6_hdr));
-	  memcpy (&pi->saddr6_recv, &pi->addr6_sent, sizeof (pi->addr6_sent));
 	  return i;
 	}
     }
@@ -463,15 +410,20 @@ static void
 ping_showrecv (struct ping_context *pc, int idx)
 {
   struct ping_info *pi = pc->info + idx;
-  char saddr[INET6_ADDRSTRLEN];
   struct timespec rtt = (pi->time_recv.tv_sec == 0
 			 && pi->time_recv.tv_nsec ==
 			 0) ? timespec_zero () : timespec_sub (pi->time_recv,
 							       pi->time_sent);
-  const char *saddr_name;
+  char saddr_name[NI_MAXHOST];
+  int err;
 
-  saddr_name =
-    inet_ntop (pi->pi_family, &pi->addr_sent, saddr, sizeof (saddr));
+  if ((err =
+       getnameinfo (&pi->daddr_send.addr, pi->daddr_send.addrlen, saddr_name,
+		    sizeof (saddr_name), NULL, 0, 0)) != 0)
+    {
+      fprintf (stderr, "%s\n", gai_strerror (err));
+      strcpy (saddr_name, "???");
+    }
 
   printf ("%s %ld.%06ld %d\n", saddr_name, rtt.tv_sec,
 	  rtt.tv_nsec / 1000, pi->count_recv);
@@ -635,31 +587,14 @@ main (int argc, char *argv[])
   for (int i = 0; i < ctx.infolen; i++)
     {
       struct ping_info *pi = ctx.info + i;
-      union
-      {
-	struct sockaddr saddr;
-	struct sockaddr_in addr4;
-	struct sockaddr_in6 addr6;
-      } addr;
-      socklen_t addrlen = sizeof (addr);
-      if (get_addr (argv[optind + i], &addr.saddr, &addrlen) == -1)
+
+      pi->daddr_send.addrlen = sizeof (pi->daddr_send);
+      if (get_addr
+	  (argv[optind + i], &pi->daddr_send.addr,
+	   &pi->daddr_send.addrlen) == -1)
 	{
 	  if (errno)
 	    perror (argv[optind + i]);
-	  exit (EXIT_FAILURE);
-	}
-      switch (addr.saddr.sa_family)
-	{
-	case AF_INET:
-	  pi->pi_family = AF_INET;
-	  pi->addr4_sent = addr.addr4.sin_addr;
-	  break;
-	case AF_INET6:
-	  pi->pi_family = AF_INET6;
-	  pi->addr6_sent = addr.addr6.sin6_addr;
-	  break;
-	default:
-	  fprintf (stderr, "FATAL: unexpected family\n");
 	  exit (EXIT_FAILURE);
 	}
     }
