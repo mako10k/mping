@@ -85,7 +85,7 @@ checksum (struct iovec *iov, size_t iovlen)
 }
 
 static int
-icmp_setopt (struct ping_context *ctx)
+icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6)
 {
   int flag;
 
@@ -100,8 +100,9 @@ icmp_setopt (struct ping_context *ctx)
   ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
   if (ret != 0)
     return ret;
-  return setsockopt (ctx->sock6, IPPROTO_IPV6, IPV6_HDRINCL, &flag,
-		     sizeof (flag));
+  if (!ipv4)
+    setsockopt (ctx->sock6, IPPROTO_IPV6, IPV6_HDRINCL, &flag, sizeof (flag));
+  return ret;
 }
 
 static ssize_t
@@ -310,7 +311,7 @@ icmp6_echoreply_recv (struct ping_context *ctx)
 }
 
 static int
-ping_context_new (struct ping_context *pc)
+ping_context_new (struct ping_context *pc, int ipv4, int ipv6)
 {
   pc->sock4 = socket (AF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (pc->sock4 == -1)
@@ -332,7 +333,7 @@ ping_context_new (struct ping_context *pc)
       return -1;
     }
   pc->asyncnsfd = asyncns_fd (pc->asyncns);
-  if (icmp_setopt (pc) == -1)
+  if (icmp_setopt (pc, ipv4, ipv6) == -1)
     {
       int _errno = errno;
       close (pc->sock4);
@@ -661,7 +662,7 @@ main (int argc, char *argv[])
 	  exit (EXIT_FAILURE);
 	}
     }
-  if (ping_context_new (&ctx) == -1)
+  if (ping_context_new (&ctx, opt_ipv4, opt_ipv6) == -1)
     {
       perror ("ping_context_new");
       exit (EXIT_FAILURE);
