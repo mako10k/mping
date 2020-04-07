@@ -49,6 +49,7 @@ struct ping_info
   struct timespec time_recv;
   int count_recv;
   struct ping_addr daddr_send;
+  struct ping_addr saddr_recv;
   int id;
   int seq;
   asyncns_query_t *asyncns_name_query;
@@ -237,6 +238,8 @@ icmp4_echoreply_recv (struct ping_context *ctx)
 	{
 	  if (ioctl (ctx->sock4, SIOCGSTAMPNS, &pi->time_recv) != 0)
 	    return -1;
+	  memcpy (&pi->saddr_recv.addr, msghdr.msg_name, msghdr.msg_namelen);
+	  pi->saddr_recv.addrlen = msghdr.msg_namelen;
 	  return i;
 	}
     }
@@ -295,6 +298,8 @@ icmp6_echoreply_recv (struct ping_context *ctx)
 	{
 	  if (ioctl (ctx->sock6, SIOCGSTAMPNS, &pi->time_recv) != 0)
 	    return -1;
+	  memcpy (&pi->saddr_recv, msghdr.msg_name, msghdr.msg_namelen);
+	  pi->saddr_recv.addrlen = msghdr.msg_namelen;
 	  return i;
 	}
     }
@@ -426,13 +431,16 @@ timespec_zero ()
 }
 
 static void
-ping_showrecv_prepare (struct ping_context *pc, int idx)
+ping_showrecv_prepare (struct ping_context *pc, int idx, int numeric)
 {
   struct ping_info *pi = pc->info + idx;
+  int flags = 0;
 
+  if (numeric)
+    flags |= NI_NUMERICHOST;
   if ((pi->asyncns_name_query =
-       asyncns_getnameinfo (pc->asyncns, &pi->daddr_send.addr,
-			    pi->daddr_send.addrlen, 0, 1, 0)) == NULL)
+       asyncns_getnameinfo (pc->asyncns, &pi->saddr_recv.addr,
+			    pi->saddr_recv.addrlen, flags, 1, 0)) == NULL)
     perror ("asyncns_getnameinfo");
 }
 
@@ -466,7 +474,8 @@ ping_showrecv_done (struct ping_context *pc, int idx)
   pi->asyncns_name_query = NULL;
   printf ("%s %ld.%06ld %d\n", saddr_name, rtt.tv_sec,
 	  rtt.tv_nsec / 1000, pi->count_recv);
-  if (pi->count_recv == 0) pi->count_recv = 1;
+  if (pi->count_recv == 0)
+    pi->count_recv = 1;
 }
 
 static void
@@ -481,22 +490,39 @@ static void
 print_usage (FILE * fp, int argc, char *argv[])
 {
   fprintf (fp, "Usage:\n");
-  fprintf (fp,
-	   "  %s [-w timeout] [-i interval] [-s size] [-d data] ipaddr ...\n",
-	   argv[0]);
+  fprintf (fp, "  %s [options] ipaddr ...\n", argv[0]);
+  fprintf (fp, "\n");
+  fprintf (fp, "Options:\n");
+  fprintf (fp, "  -w timeout  : timeout for response\n");
+  fprintf (fp, "  -i interval : interval to send\n");
+  fprintf (fp, "  -s size     : payload data size\n");
+  fprintf (fp, "  -d data     : payload data\n");
+  fprintf (fp, "  -n          : printing by numeric host\n");
+  fprintf (fp, "  -N          : don't resolve hostname\n");
+  fprintf (fp, "  -4          : ipv4 only\n");
+  fprintf (fp, "  -6          : ipv6 only\n");
+  fprintf (fp, "  -v          : print version\n");
+  fprintf (fp, "  -h          : print usage\n");
   fprintf (fp, "\n");
 }
 
 static int
-get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen)
+get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen,
+	  int ipv4, int ipv6, int numeric)
 {
   struct addrinfo *addrinfo, hints, *ai;
   int err;
 
   memset (&hints, 0, sizeof (hints));
   hints.ai_family = AF_UNSPEC;
+  if (ipv4 && !ipv6)
+    hints.ai_family = AF_INET;
+  if (!ipv4 && ipv6)
+    hints.ai_family = AF_INET6;
   hints.ai_socktype = SOCK_RAW;
   hints.ai_protocol = 0;
+  if (numeric)
+    hints.ai_flags |= AI_NUMERICHOST;
 
   if ((err = getaddrinfo (node, NULL, &hints, &addrinfo)) != 0)
     {
@@ -526,6 +552,10 @@ main (int argc, char *argv[])
   int exitcode = EXIT_SUCCESS;
   int opt;
   double opt_double;
+  int opt_numeric_print = 0;
+  int opt_numeric_parse = 0;
+  int opt_ipv4 = 0;
+  int opt_ipv6 = 0;
   char *p;
   struct timespec to_spec = { 1, 0 };
   struct timespec in_spec = { 0, 10000000 };
@@ -540,7 +570,7 @@ main (int argc, char *argv[])
   for (int i = 0; i < datalen; i++)
     data[i] = 32 + i % (32 - 127);
 
-  while ((opt = getopt (argc, argv, "w:i:s:d:vh")) != -1)
+  while ((opt = getopt (argc, argv, "w:i:s:d:nN46vh")) != -1)
     {
       switch (opt)
 	{
@@ -604,6 +634,22 @@ main (int argc, char *argv[])
 	  strcpy (data, optarg);
 	  break;
 
+	case 'n':
+	  opt_numeric_print = 1;
+	  break;
+
+	case 'N':
+	  opt_numeric_parse = 1;
+	  break;
+
+	case '4':
+	  opt_ipv4 = 1;
+	  break;
+
+	case '6':
+	  opt_ipv6 = 1;
+	  break;
+
 	case 'v':
 	  print_version (stdout, argc, argv);
 	  exit (EXIT_SUCCESS);
@@ -631,7 +677,8 @@ main (int argc, char *argv[])
       pi->daddr_send.addrlen = sizeof (pi->daddr_send);
       if (get_addr
 	  (argv[optind + i], &pi->daddr_send.addr,
-	   &pi->daddr_send.addrlen) == -1)
+	   &pi->daddr_send.addrlen, opt_ipv4, opt_ipv6,
+	   opt_numeric_parse) == -1)
 	{
 	  if (errno)
 	    perror (argv[optind + i]);
@@ -759,11 +806,15 @@ main (int argc, char *argv[])
 		break;
 	    }
 
-	  if (FD_ISSET (ctx.timeoutfd, &rfds))
+	  if (ctx.timeoutfd != -1 && FD_ISSET (ctx.timeoutfd, &rfds))
 	    {
 	      for (int i = 0; i < ctx.infolen; i++)
 		if (ctx.info[i].count_recv == 0)
-		  ping_showrecv_prepare (&ctx, i);
+		  {
+		    memcpy (&ctx.info[i].saddr_recv, &ctx.info[i].daddr_send,
+			    sizeof (ctx.info[i].saddr_recv));
+		    ping_showrecv_prepare (&ctx, i, opt_numeric_print);
+		  }
 	      close (ctx.timeoutfd);
 	      ctx.timeoutfd = -1;
 	    }
@@ -778,8 +829,8 @@ main (int argc, char *argv[])
 		  perror ("icmp_echoreply_recv");
 		  break;
 		}
-              ctx.info[idx].count_recv ++;
-	      ping_showrecv_prepare (&ctx, idx);
+	      ctx.info[idx].count_recv++;
+	      ping_showrecv_prepare (&ctx, idx, opt_numeric_print);
 	    }
 
 	  if (FD_ISSET (ctx.sock6, &rfds))
@@ -792,14 +843,15 @@ main (int argc, char *argv[])
 		  perror ("icmp_echoreply_recv");
 		  break;
 		}
-              ctx.info[idx].count_recv ++;
-	      ping_showrecv_prepare (&ctx, idx);
+	      ctx.info[idx].count_recv++;
+	      ping_showrecv_prepare (&ctx, idx, opt_numeric_print);
 	    }
 
 	next:{
 	    int count_recvs = 0;
 	    for (int i = 0; i < ctx.infolen; i++)
-	      if (ctx.info[i].count_recv > 0)
+	      if (ctx.info[i].asyncns_name_query == NULL
+		  && ctx.info[i].count_recv > 0)
 		count_recvs++;
 	    if (count_recvs >= ctx.infolen)
 	      break;
