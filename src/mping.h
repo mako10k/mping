@@ -29,6 +29,7 @@
 #include <asyncns.h>
 
 #include "config.h"
+#include "mping_opt.h"
 
 struct ping_addr
 {
@@ -51,31 +52,6 @@ struct ping_info
   int id;
   int seq;
   asyncns_query_t *asyncns_name_query;
-};
-
-static struct timespec
-ntots (long sec, long nsec)
-{
-  struct timespec ts = { sec, nsec };
-  return ts;
-}
-
-#define PINGOPT_TTL_DEFAULT 30
-#define PINGOPT_DATALEN_DEFAULT (64 - sizeof (struct icmphdr))
-#define PINGOPT_INTERVAL_DEFAULT (ntots (1, 0))
-#define PINGOPT_TIMEOUT_DEFAULT (ntots (0, 10000000))
-
-struct ping_option
-{
-  int ipv4:1;
-  int ipv6:1;
-  int ttl:9;
-  int numeric_print:1;
-  int numeric_parse:1;
-  unsigned int datalen:16;
-  char *data;
-  struct timespec interval;
-  struct timespec timeout;
 };
 
 struct ping_context
@@ -352,20 +328,6 @@ icmp6_echoreply_recv (struct ping_context *ctx)
   return -1;
 }
 
-static struct ping_option
-po_defaults ()
-{
-  struct ping_option po;
-
-  memset (&po, 0, sizeof (po));
-  po.ttl = PINGOPT_TTL_DEFAULT;
-  po.datalen = PINGOPT_DATALEN_DEFAULT;
-  po.interval = PINGOPT_INTERVAL_DEFAULT;
-  po.timeout = PINGOPT_TIMEOUT_DEFAULT;
-
-  return po;
-}
-
 static int
 ping_context_new (struct ping_context *pc, struct ping_option *po)
 {
@@ -439,55 +401,6 @@ ping_context_destory (struct ping_context *pc)
     close (pc->intervalfd);
 }
 
-#if 0
-static struct timespec
-timespec_add (struct timespec a, struct timespec b)
-{
-  struct timespec c;
-
-  c.tv_sec = a.tv_sec + b.tv_sec;
-  c.tv_nsec = a.tv_nsec + b.tv_nsec;
-  if (c.tv_nsec >= 1000000000)
-    {
-      c.tv_sec++;
-      c.tv_nsec -= 1000000000;
-    }
-  return c;
-}
-#endif
-
-static struct timespec
-timespec_sub (struct timespec a, struct timespec b)
-{
-  struct timespec c;
-
-  if (a.tv_nsec < b.tv_nsec)
-    {
-      a.tv_sec--;
-      a.tv_nsec += 1000000000;
-    }
-  c.tv_sec = a.tv_sec - b.tv_sec;
-  c.tv_nsec = a.tv_nsec - b.tv_nsec;
-  return c;
-}
-
-#if 0
-static int
-timespec_cmp (struct timespec a, struct timespec b)
-{
-  if (a.tv_sec == b.tv_sec)
-    return a.tv_nsec - b.tv_nsec;
-  return a.tv_sec - b.tv_sec;
-}
-#endif
-
-static struct timespec
-timespec_zero ()
-{
-  struct timespec ret = { 0, 0 };
-  return ret;
-}
-
 static void
 ping_showrecv_prepare (struct ping_context *pc, int idx, int numeric)
 {
@@ -536,35 +449,6 @@ ping_showrecv_done (struct ping_context *pc, int idx)
     pi->count_recv = 1;
 }
 
-static void
-print_version (FILE * fp, int argc, char *argv[])
-{
-  fprintf (fp, "%s in %s (bug-report: %s)\n", basename (argv[0]),
-	   PACKAGE_STRING, PACKAGE_BUGREPORT);
-  fprintf (fp, "\n");
-}
-
-static void
-print_usage (FILE * fp, int argc, char *argv[])
-{
-  fprintf (fp, "Usage:\n");
-  fprintf (fp, "  %s [options] ipaddr ...\n", argv[0]);
-  fprintf (fp, "\n");
-  fprintf (fp, "Options:\n");
-  fprintf (fp, "  -w timeout  : timeout for response\n");
-  fprintf (fp, "  -i interval : interval to send\n");
-  fprintf (fp, "  -s size     : payload data size\n");
-  fprintf (fp, "  -d data     : payload data\n");
-  fprintf (fp, "  -t ttl      : set ip time to live\n");
-  fprintf (fp, "  -n          : printing by numeric host\n");
-  fprintf (fp, "  -N          : don't resolve hostname\n");
-  fprintf (fp, "  -4          : ipv4 only\n");
-  fprintf (fp, "  -6          : ipv6 only\n");
-  fprintf (fp, "  -v          : print version\n");
-  fprintf (fp, "  -h          : print usage\n");
-  fprintf (fp, "\n");
-}
-
 static int
 get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen,
 	  int ipv4, int ipv6, int numeric)
@@ -602,16 +486,6 @@ get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen,
     }
   freeaddrinfo (addrinfo);
   return 0;
-}
-
-static struct timespec
-dtots (double d)
-{
-  struct timespec ts;
-
-  ts.tv_sec = d;
-  ts.tv_nsec = (d - ts.tv_sec) * 1000000000;
-  return ts;
 }
 
 #endif
