@@ -51,6 +51,31 @@ struct ping_info
   asyncns_query_t *asyncns_name_query;
 };
 
+static struct timespec
+ntots (long sec, long nsec)
+{
+  struct timespec ts = { sec, nsec };
+  return ts;
+}
+
+#define PINGOPT_TTL_DEFAULT 30
+#define PINGOPT_DATALEN_DEFAULT (64 - sizeof (struct icmphdr))
+#define PINGOPT_INTERVAL_DEFAULT (ntots (1, 0))
+#define PINGOPT_TIMEOUT_DEFAULT (ntots (0, 10000000))
+
+struct ping_option
+{
+  int ipv4:1;
+  int ipv6:1;
+  int ttl:9;
+  int numeric_print:1;
+  int numeric_parse:1;
+  unsigned int datalen:16;
+  char *data;
+  struct timespec interval;
+  struct timespec timeout;
+};
+
 struct ping_context
 {
   int sock4;
@@ -63,6 +88,7 @@ struct ping_context
   struct ping_info *info;
   size_t infolen;
   int sndidx;
+  struct ping_option opt;
 };
 
 // 1の補数和の１の補数(IP Checksum)
@@ -81,7 +107,7 @@ checksum (struct iovec *iov, size_t iovlen)
 }
 
 static int
-icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6, int ttl)
+icmp_setopt (struct ping_context *ctx)
 {
   int flag;
   int ret;
@@ -97,13 +123,17 @@ icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6, int ttl)
   ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
   if (ret != 0)
     return ret;
-  if (ttl >= 0)
+  if (ctx->opt.ttl >= 0)
     {
+      int ttl = ctx->opt.ttl;
+
       ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_TTL, &ttl, sizeof (ttl));
       if (ret != 0)
 	return ret;
-      if (!ipv4)
+      if (ctx->opt.ipv6)
 	{
+	  ttl = ctx->opt.ttl;
+
 	  ret =
 	    setsockopt (ctx->sock6, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl,
 			sizeof (ttl));
@@ -116,7 +146,7 @@ icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6, int ttl)
 }
 
 static ssize_t
-icmp_echo_send (struct ping_context *ctx, char *data, size_t datalen)
+icmp_echo_send (struct ping_context *ctx)
 {
   struct msghdr msghdr;
   struct iovec iov[2];
@@ -144,8 +174,8 @@ icmp_echo_send (struct ping_context *ctx, char *data, size_t datalen)
       // 送信情報の作成
       iov[0].iov_base = &icmphdr;
       iov[0].iov_len = sizeof (icmphdr);
-      iov[1].iov_base = data;
-      iov[1].iov_len = datalen;
+      iov[1].iov_base = ctx->opt.data;
+      iov[1].iov_len = ctx->opt.datalen;
       // チェックサムの計算
       icmphdr.checksum = checksum (iov, 2);
 
@@ -160,8 +190,8 @@ icmp_echo_send (struct ping_context *ctx, char *data, size_t datalen)
       // 送信情報の作成
       iov[0].iov_base = &icmp6_hdr;
       iov[0].iov_len = sizeof (icmp6_hdr);
-      iov[1].iov_base = data;
-      iov[1].iov_len = datalen;
+      iov[1].iov_base = ctx->opt.data;
+      iov[1].iov_len = ctx->opt.datalen;
       // チェックサムの計算
       icmp6_hdr.icmp6_cksum = checksum (iov, 2);
 
@@ -320,8 +350,22 @@ icmp6_echoreply_recv (struct ping_context *ctx)
   return -1;
 }
 
+static struct ping_option
+po_defaults ()
+{
+  struct ping_option po;
+
+  memset (&po, 0, sizeof (po));
+  po.ttl = PINGOPT_TTL_DEFAULT;
+  po.datalen = PINGOPT_DATALEN_DEFAULT;
+  po.interval = PINGOPT_INTERVAL_DEFAULT;
+  po.timeout = PINGOPT_TIMEOUT_DEFAULT;
+
+  return po;
+}
+
 static int
-ping_context_new (struct ping_context *pc, int ipv4, int ipv6, int ttl)
+ping_context_new (struct ping_context *pc, struct ping_option *po)
 {
   pc->sock4 = socket (AF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (pc->sock4 == -1)
@@ -343,7 +387,7 @@ ping_context_new (struct ping_context *pc, int ipv4, int ipv6, int ttl)
       return -1;
     }
   pc->asyncnsfd = asyncns_fd (pc->asyncns);
-  if (icmp_setopt (pc, ipv4, ipv6, ttl) == -1)
+  if (icmp_setopt (pc) == -1)
     {
       int _errno = errno;
       close (pc->sock4);
@@ -377,6 +421,7 @@ ping_context_new (struct ping_context *pc, int ipv4, int ipv6, int ttl)
   pc->info = NULL;
   pc->infolen = 0;
   pc->sndidx = 0;
+  pc->opt = po ? *po : po_defaults ();
   return 0;
 }
 
@@ -557,31 +602,26 @@ get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen,
   return 0;
 }
 
+static struct timespec
+dtots (double d)
+{
+  struct timespec ts;
+
+  ts.tv_sec = d;
+  ts.tv_nsec = (d - ts.tv_sec) * 1000000000;
+  return ts;
+}
+
 int
 main (int argc, char *argv[])
 {
   struct ping_context ctx;
+  struct ping_option ctx_opt = po_defaults ();
   int exitcode = EXIT_SUCCESS;
   int opt;
+  long opt_long;
   double opt_double;
-  int opt_numeric_print = 0;
-  int opt_numeric_parse = 0;
-  int opt_ipv4 = 0;
-  int opt_ipv6 = 0;
-  int opt_ttl = -1;
   char *p;
-  struct timespec to_spec = { 1, 0 };
-  struct timespec in_spec = { 0, 10000000 };
-  int datalen = 56;
-  char *data = malloc (datalen);
-
-  if (data == NULL)
-    {
-      perror ("malloc");
-      exit (EXIT_FAILURE);
-    }
-  for (int i = 0; i < datalen; i++)
-    data[i] = 32 + i % (32 - 127);
 
   while ((opt = getopt (argc, argv, "w:i:s:d:t:nN46vh")) != -1)
     {
@@ -594,8 +634,7 @@ main (int argc, char *argv[])
 	      fprintf (stderr, "error argument -%c %s\n", opt, optarg);
 	      exit (EXIT_FAILURE);
 	    }
-	  to_spec.tv_sec = opt_double;
-	  to_spec.tv_nsec = (opt_double - to_spec.tv_sec) * 1000000000;
+	  ctx_opt.timeout = dtots (opt_double);
 	  break;
 	case 'i':
 	  opt_double = strtod (optarg, &p);
@@ -604,72 +643,61 @@ main (int argc, char *argv[])
 	      fprintf (stderr, "error argument -%c %s\n", opt, optarg);
 	      exit (EXIT_FAILURE);
 	    }
-	  in_spec.tv_sec = opt_double;
-	  in_spec.tv_nsec = (opt_double - in_spec.tv_sec) * 1000000000;
+	  ctx_opt.interval = dtots (opt_double);
 	  break;
 	case 's':
-	  datalen = strtol (optarg, &p, 0);
+	  opt_long = strtol (optarg, &p, 0);
 	  if (p == optarg || *p != '\0')
 	    {
 	      fprintf (stderr, "error argument -%c %s\n", opt, optarg);
 	      exit (EXIT_FAILURE);
 	    }
-	  if (datalen < 0 || datalen > 65536)
+	  if (opt_long < 0 || opt_long > 65536)
 	    {
 	      fprintf (stderr, "packet size must be between 0 and %d\n",
 		       65536);
 	      exit (EXIT_FAILURE);
 	    }
-	  data = realloc (data, datalen);
-	  if (datalen > 0 && data == NULL)
-	    {
-	      perror ("realloc");
-	      exit (EXIT_FAILURE);
-	    }
-	  for (int i = 0; i < datalen; i++)
-	    data[i] = 32 + i % (32 - 127);
+	  ctx_opt.data = NULL;
+	  ctx_opt.datalen = opt_long;
 	  break;
 
 	case 'd':
-	  datalen = strlen (optarg);
-	  if (datalen < 0 || datalen > 65536)
+	  opt_long = strlen (optarg);
+	  if (opt_long < 0 || opt_long > 65536)
 	    {
 	      fprintf (stderr, "packet size must be between 0 and %d\n",
 		       65536);
 	      exit (EXIT_FAILURE);
 	    }
-	  data = realloc (data, datalen);
-	  if (datalen > 0 && data == NULL)
-	    {
-	      perror ("realloc");
-	      exit (EXIT_FAILURE);
-	    }
-	  strcpy (data, optarg);
+	  ctx_opt.data = optarg;
+	  ctx_opt.datalen = opt_long;
 	  break;
 
 	case 't':
-	  opt_ttl = strtol (optarg, &p, 0);
-	  if (optarg == p || *p != '\0' || opt_ttl > 255)
+	  opt_long = strtol (optarg, &p, 0);
+	  if (optarg == p || *p != '\0' || opt_long > 255)
 	    {
 	      fprintf (stderr, "ttl must be between 0 and 255\n");
 	      exit (EXIT_FAILURE);
 	    }
+	  ctx_opt.ttl = opt_long;
 	  break;
 
 	case 'n':
-	  opt_numeric_print = 1;
+	  ctx_opt.numeric_print = 1;
 	  break;
 
 	case 'N':
-	  opt_numeric_parse = 1;
+	  ctx_opt.numeric_parse = 1;
 	  break;
 
 	case '4':
-	  opt_ipv4 = 1;
+	  ctx_opt.ipv4 = 1;
 	  break;
 
 	case '6':
-	  opt_ipv6 = 1;
+	  ctx_opt.ipv6 = 1;
 	  break;
 
 	case 'v':
@@ -683,7 +711,25 @@ main (int argc, char *argv[])
 	  exit (EXIT_FAILURE);
 	}
     }
-  if (ping_context_new (&ctx, opt_ipv4, opt_ipv6, opt_ttl) == -1)
+
+  if (!ctx_opt.ipv4 && !ctx_opt.ipv6)
+    {
+      ctx_opt.ipv4 = 1;
+      ctx_opt.ipv6 = 1;
+    }
+  if (ctx_opt.data == NULL)
+    {
+      ctx_opt.data = malloc (ctx_opt.datalen);
+      if (ctx_opt.data == NULL)
+	{
+	  perror ("malloc");
+	  exit (EXIT_FAILURE);
+	}
+      // fill in by ascii printables
+      for (int i = 0; i < ctx_opt.datalen; i++)
+	ctx_opt.data[i] = i % (127 - 32) + 32;
+    }
+  if (ping_context_new (&ctx, &ctx_opt) == -1)
     {
       perror ("ping_context_new");
       exit (EXIT_FAILURE);
@@ -699,8 +745,8 @@ main (int argc, char *argv[])
       pi->daddr_send.addrlen = sizeof (pi->daddr_send);
       if (get_addr
 	  (argv[optind + i], &pi->daddr_send.addr,
-	   &pi->daddr_send.addrlen, opt_ipv4, opt_ipv6,
-	   opt_numeric_parse) == -1)
+	   &pi->daddr_send.addrlen, ctx.opt.ipv4, ctx.opt.ipv6,
+	   ctx.opt.numeric_parse) == -1)
 	{
 	  if (errno)
 	    perror (argv[optind + i]);
@@ -714,7 +760,7 @@ main (int argc, char *argv[])
 
       it_in.it_value.tv_sec = 0;
       it_in.it_value.tv_nsec = 1;
-      it_in.it_interval = in_spec;
+      it_in.it_interval = ctx.opt.interval;
 
       if (timerfd_settime (ctx.intervalfd, 0, &it_in, NULL) == -1)
 	{
@@ -803,7 +849,7 @@ main (int argc, char *argv[])
 
 		      close (ctx.intervalfd);
 		      ctx.intervalfd = -1;
-		      it_to.it_value = to_spec;
+		      it_to.it_value = ctx.opt.timeout;
 		      it_to.it_interval.tv_sec = 0;
 		      it_to.it_interval.tv_nsec = 0;
 
@@ -817,7 +863,7 @@ main (int argc, char *argv[])
 		      break;
 		    }
 
-		  if (icmp_echo_send (&ctx, data, datalen) == -1)
+		  if (icmp_echo_send (&ctx) == -1)
 		    {
 		      perror ("icmp_echo_send");
 		      exitcode = EXIT_FAILURE;
@@ -835,7 +881,7 @@ main (int argc, char *argv[])
 		  {
 		    memcpy (&ctx.info[i].saddr_recv, &ctx.info[i].daddr_send,
 			    sizeof (ctx.info[i].saddr_recv));
-		    ping_showrecv_prepare (&ctx, i, opt_numeric_print);
+		    ping_showrecv_prepare (&ctx, i, ctx.opt.numeric_print);
 		  }
 	      close (ctx.timeoutfd);
 	      ctx.timeoutfd = -1;
@@ -852,7 +898,7 @@ main (int argc, char *argv[])
 		  break;
 		}
 	      ctx.info[idx].count_recv++;
-	      ping_showrecv_prepare (&ctx, idx, opt_numeric_print);
+	      ping_showrecv_prepare (&ctx, idx, ctx.opt.numeric_print);
 	    }
 
 	  if (FD_ISSET (ctx.sock6, &rfds))
@@ -866,7 +912,7 @@ main (int argc, char *argv[])
 		  break;
 		}
 	      ctx.info[idx].count_recv++;
-	      ping_showrecv_prepare (&ctx, idx, opt_numeric_print);
+	      ping_showrecv_prepare (&ctx, idx, ctx.opt.numeric_print);
 	    }
 
 	next:{
