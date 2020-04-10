@@ -1,6 +1,6 @@
 bin_PROGRAMS = mping
 
-mping_SOURCES = mping.c
+mping_SOURCES = mping.c mping.h
 mping_LDADD = -lasyncns
 
 AM_CFLAGS = -O3 -Wall
