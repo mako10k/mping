@@ -25,10 +25,6 @@
 
 #include "config.h"
 
-#ifndef ICMP_FILTER
-#define ICMP_FILTER 1
-#endif
-
 #define MAX_DATALEN4 (65535-sizeof(struct iphdr)-sizeof(struct icmphdr))
 #define MAX_DATALEN6 (65535-sizeof(struct ip6_hdr)-sizeof(struct icmp6_hdr))
 
@@ -85,14 +81,15 @@ checksum (struct iovec *iov, size_t iovlen)
 }
 
 static int
-icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6)
+icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6, int ttl)
 {
   int flag;
+  int ret;
 
 #ifdef ICMP_FILTER
   flag = ~(1 << ICMP_ECHO | 1 << ICMP_ECHOREPLY);
-  int ret = setsockopt (ctx->sock4, IPPROTO_RAW, ICMP_FILTER, &flag,
-			sizeof (flag));
+  ret = setsockopt (ctx->sock4, IPPROTO_RAW, ICMP_FILTER, &flag,
+		    sizeof (flag));
   if (ret != 0)
     return ret;
 #endif
@@ -100,8 +97,21 @@ icmp_setopt (struct ping_context *ctx, int ipv4, int ipv6)
   ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
   if (ret != 0)
     return ret;
-  if (!ipv4)
-    setsockopt (ctx->sock6, IPPROTO_IPV6, IPV6_HDRINCL, &flag, sizeof (flag));
+  if (ttl >= 0)
+    {
+      ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_TTL, &ttl, sizeof (ttl));
+      if (ret != 0)
+	return ret;
+      if (!ipv4)
+	{
+	  ret =
+	    setsockopt (ctx->sock6, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl,
+			sizeof (ttl));
+	  if (ret != 0)
+	    return ret;
+	}
+    }
+
   return ret;
 }
 
@@ -311,7 +321,7 @@ icmp6_echoreply_recv (struct ping_context *ctx)
 }
 
 static int
-ping_context_new (struct ping_context *pc, int ipv4, int ipv6)
+ping_context_new (struct ping_context *pc, int ipv4, int ipv6, int ttl)
 {
   pc->sock4 = socket (AF_INET, SOCK_RAW, IPPROTO_ICMP);
   if (pc->sock4 == -1)
@@ -333,7 +343,7 @@ ping_context_new (struct ping_context *pc, int ipv4, int ipv6)
       return -1;
     }
   pc->asyncnsfd = asyncns_fd (pc->asyncns);
-  if (icmp_setopt (pc, ipv4, ipv6) == -1)
+  if (icmp_setopt (pc, ipv4, ipv6, ttl) == -1)
     {
       int _errno = errno;
       close (pc->sock4);
@@ -498,6 +508,7 @@ print_usage (FILE * fp, int argc, char *argv[])
   fprintf (fp, "  -i interval : interval to send\n");
   fprintf (fp, "  -s size     : payload data size\n");
   fprintf (fp, "  -d data     : payload data\n");
+  fprintf (fp, "  -t ttl      : set ip time to live\n");
   fprintf (fp, "  -n          : printing by numeric host\n");
   fprintf (fp, "  -N          : don't resolve hostname\n");
   fprintf (fp, "  -4          : ipv4 only\n");
@@ -557,6 +568,7 @@ main (int argc, char *argv[])
   int opt_numeric_parse = 0;
   int opt_ipv4 = 0;
   int opt_ipv6 = 0;
+  int opt_ttl = -1;
   char *p;
   struct timespec to_spec = { 1, 0 };
   struct timespec in_spec = { 0, 10000000 };
@@ -571,7 +583,7 @@ main (int argc, char *argv[])
   for (int i = 0; i < datalen; i++)
     data[i] = 32 + i % (32 - 127);
 
-  while ((opt = getopt (argc, argv, "w:i:s:d:nN46vh")) != -1)
+  while ((opt = getopt (argc, argv, "w:i:s:d:t:nN46vh")) != -1)
     {
       switch (opt)
 	{
@@ -635,6 +647,15 @@ main (int argc, char *argv[])
 	  strcpy (data, optarg);
 	  break;
 
+	case 't':
+	  opt_ttl = strtol (optarg, &p, 0);
+	  if (optarg == p || *p != '\0' || opt_ttl > 255)
+	    {
+	      fprintf (stderr, "ttl must be between 0 and 255\n");
+	      exit (EXIT_FAILURE);
+	    }
+	  break;
+
 	case 'n':
 	  opt_numeric_print = 1;
 	  break;
@@ -662,7 +683,7 @@ main (int argc, char *argv[])
 	  exit (EXIT_FAILURE);
 	}
     }
-  if (ping_context_new (&ctx, opt_ipv4, opt_ipv6) == -1)
+  if (ping_context_new (&ctx, opt_ipv4, opt_ipv6, opt_ttl) == -1)
     {
       perror ("ping_context_new");
       exit (EXIT_FAILURE);
