@@ -1,3 +1,21 @@
+mping (0.1.5-1) unstable; urgency=medium
+
+  * fix bug to set option
+
+ -- MAINTAINER <katsumata-m@t-axis.co.jp>  Wed, 15 Apr 2020 18:23:47 +0900
+
+mping (0.1.4-1) unstable; urgency=medium
+
+  * change option structure
+
+ -- MAINTAINER <katsumata-m@t-axis.co.jp>  Wed, 15 Apr 2020 18:13:02 +0900
+
+mping (0.1.3-5) unstable; urgency=medium
+
+  * support non blocking IO
+
+ -- MAINTAINER <katsumata-m@t-axis.co.jp>  Tue, 14 Apr 2020 17:55:51 +0900
+
 mping (0.1.3-4) unstable; urgency=medium
 
   * fix bugs
