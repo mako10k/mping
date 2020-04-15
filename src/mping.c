@@ -135,12 +135,12 @@ icmp_setopt (struct ping_context *ctx)
 	    return ret;
 	}
     }
-  int flags = fcntl(ctx->sock4, F_GETFL);
+  int flags = fcntl (ctx->sock4, F_GETFL);
   flags |= O_NONBLOCK;
-  fcntl(ctx->sock4, F_SETFL, &flags);
-  flags = fcntl(ctx->sock6, F_GETFL);
+  fcntl (ctx->sock4, F_SETFL, &flags);
+  flags = fcntl (ctx->sock6, F_GETFL);
   flags |= O_NONBLOCK;
-  fcntl(ctx->sock6, F_SETFL, &flags);
+  fcntl (ctx->sock6, F_SETFL, &flags);
 
   return ret;
 }
