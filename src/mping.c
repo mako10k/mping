@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <fcntl.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -112,13 +113,6 @@ icmp_setopt (struct ping_context *ctx)
   int flag;
   int ret;
 
-#ifdef ICMP_FILTER
-  flag = ~(1 << ICMP_ECHO | 1 << ICMP_ECHOREPLY);
-  ret = setsockopt (ctx->sock4, IPPROTO_RAW, ICMP_FILTER, &flag,
-		    sizeof (flag));
-  if (ret != 0)
-    return ret;
-#endif
   flag = 0;
   ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
   if (ret != 0)
@@ -141,6 +135,12 @@ icmp_setopt (struct ping_context *ctx)
 	    return ret;
 	}
     }
+  int flags = fcntl(ctx->sock4, F_GETFL);
+  flags |= O_NONBLOCK;
+  fcntl(ctx->sock4, F_SETFL, &flags);
+  flags = fcntl(ctx->sock6, F_GETFL);
+  flags |= O_NONBLOCK;
+  fcntl(ctx->sock6, F_SETFL, &flags);
 
   return ret;
 }
@@ -387,15 +387,6 @@ ping_context_new (struct ping_context *pc, struct ping_option *po)
       return -1;
     }
   pc->asyncnsfd = asyncns_fd (pc->asyncns);
-  if (icmp_setopt (pc) == -1)
-    {
-      int _errno = errno;
-      close (pc->sock4);
-      close (pc->sock6);
-      asyncns_free (pc->asyncns);
-      errno = _errno;
-      return -1;
-    }
   pc->timeoutfd = timerfd_create (CLOCK_MONOTONIC, 0);
   if (pc->timeoutfd == -1)
     {
@@ -422,6 +413,15 @@ ping_context_new (struct ping_context *pc, struct ping_option *po)
   pc->infolen = 0;
   pc->sndidx = 0;
   pc->opt = po ? *po : po_defaults ();
+  if (icmp_setopt (pc) == -1)
+    {
+      int _errno = errno;
+      close (pc->sock4);
+      close (pc->sock6);
+      asyncns_free (pc->asyncns);
+      errno = _errno;
+      return -1;
+    }
   return 0;
 }
 
