@@ -1,0 +1,12 @@
+[local]
+method                 = local
+hash                   = md5
+allow_unsigned_uploads = 1
+allow_dcut             = 1
+run_linitian           = 0
+run_dinstall           = 0
+check_version          = 0
+post_upload_command    =
+pre_upload_command     =
+allowed_distributions  = (?!UNRELEASED)
+incoming               = /root/sync/stretch

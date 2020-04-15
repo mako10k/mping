@@ -1,0 +1,22 @@
+FROM debian:stretch
+
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN apt-get update && \
+    apt-get upgrade -y --autoremove && \
+    apt-get install -y --autoremove git build-essential automake libasyncns-dev libtool debmake debhelper libcap2-bin && \
+    apt-get clean
+
+# PATCH debmake when running on Docker
+RUN sed -i 's/os\.getlogin()/os.environ.get('\''USER'\'', '\''root'\'')/g' /usr/lib/python3/dist-packages/debmake/para.py
+
+WORKDIR /root
+COPY @PACKAGE@-@VERSION@.tar.gz .
+RUN tar xvzf @PACKAGE@-@VERSION@.tar.gz
+WORKDIR @PACKAGE@-@VERSION@
+RUN mv debian/dput.cf ../.dput.cf
+RUN debmake
+RUN debuild -uc -us
+WORKDIR ..
+RUN mkdir -p sync/stretch
+RUN dput -c .dput.cf local @PACKAGE@_@VERSION@-?_*.changes
