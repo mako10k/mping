@@ -113,13 +113,17 @@ checksum (struct iovec *iov, size_t iovlen)
 static int
 icmp_setopt (struct ping_context *ctx)
 {
-  int flag;
-  int ret;
+  int ret = 0;
 
-  flag = 0;
-  ret = setsockopt (ctx->sock4, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
-  if (ret != 0)
-    return ret;
+#if 0
+  {
+    int flag = 0;
+    ret =
+      setsockopt (ctx->sock4, IPPROTO_IP, IP_HDRINCL, &flag, sizeof (flag));
+    if (ret != 0)
+      return ret;
+  }
+#endif
   if (ctx->opt.ttl >= 0)
     {
       int ttl = ctx->opt.ttl;
@@ -138,13 +142,16 @@ icmp_setopt (struct ping_context *ctx)
 	    return ret;
 	}
     }
-  int flags = fcntl (ctx->sock4, F_GETFL);
-  flags |= O_NONBLOCK;
-  fcntl (ctx->sock4, F_SETFL, &flags);
-  flags = fcntl (ctx->sock6, F_GETFL);
-  flags |= O_NONBLOCK;
-  fcntl (ctx->sock6, F_SETFL, &flags);
-
+  {
+    int flags = fcntl (ctx->sock4, F_GETFL);
+    flags |= O_NONBLOCK;
+    fcntl (ctx->sock4, F_SETFL, &flags);
+  }
+  {
+    int flags = fcntl (ctx->sock6, F_GETFL);
+    flags |= O_NONBLOCK;
+    fcntl (ctx->sock6, F_SETFL, &flags);
+  }
   return ret;
 }
 
