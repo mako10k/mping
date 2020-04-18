@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <fcntl.h>
+#include <syslog.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -72,6 +73,8 @@ struct ping_option
   int numeric_print:1;
   int numeric_parse:1;
   unsigned int datalen:16;
+  unsigned int verbose:3;
+  int pstderr:1;
   char *data;
   struct timespec interval;
   struct timespec timeout;
@@ -360,6 +363,7 @@ po_defaults ()
   po.datalen = PINGOPT_DATALEN_DEFAULT;
   po.interval = PINGOPT_INTERVAL_DEFAULT;
   po.timeout = PINGOPT_TIMEOUT_DEFAULT;
+  po.pstderr = isatty (STDIN_FILENO);
 
   return po;
 }
@@ -497,7 +501,7 @@ ping_showrecv_prepare (struct ping_context *pc, int idx, int numeric)
   if ((pi->asyncns_name_query =
        asyncns_getnameinfo (pc->asyncns, &pi->saddr_recv.addr,
 			    pi->saddr_recv.addrlen, flags, 1, 0)) == NULL)
-    perror ("asyncns_getnameinfo");
+    syslog (LOG_CRIT, "asyncns_getnameinfo: %s", strerror (errno));
 }
 
 static void
@@ -521,8 +525,8 @@ ping_showrecv_done (struct ping_context *pc, int idx)
 	return;
       if (err != 0)
 	{
-	  fprintf (stderr, "asyncns_getnameinfo_done: %s\n",
-		   gai_strerror (err));
+	  syslog (LOG_WARNING, "asyncns_getnameinfo_done: %s\n",
+		  gai_strerror (err));
 	  strcpy (saddr_name, "???");
 	}
     }
@@ -558,9 +562,35 @@ print_usage (FILE * fp, int argc, char *argv[])
   fprintf (fp, "  -N          : don't resolve hostname\n");
   fprintf (fp, "  -4          : ipv4 only\n");
   fprintf (fp, "  -6          : ipv6 only\n");
-  fprintf (fp, "  -v          : print version\n");
+  fprintf (fp, "  -v          : increase verbosity\n");
+  fprintf (fp, "  -e          : force print stderr\n");
+  fprintf (fp, "  -E          : suppress print stderr\n");
+  fprintf (fp, "  -V          : print version\n");
   fprintf (fp, "  -h          : print usage\n");
   fprintf (fp, "\n");
+}
+
+static void
+setloglevel (int level)
+{
+  switch (level)
+    {
+    case 0:
+      setlogmask (LOG_UPTO (LOG_ERR));
+      break;
+    case 1:
+      setlogmask (LOG_UPTO (LOG_WARNING));
+      break;
+    case 2:
+      setlogmask (LOG_UPTO (LOG_NOTICE));
+      break;
+    case 3:
+      setlogmask (LOG_UPTO (LOG_INFO));
+      break;
+    default:
+      setloglevel (LOG_UPTO (LOG_DEBUG));
+      break;
+    }
 }
 
 static int
@@ -583,7 +613,7 @@ get_addr (const char *node, struct sockaddr *saddr, socklen_t * saddrlen,
 
   if ((err = getaddrinfo (node, NULL, &hints, &addrinfo)) != 0)
     {
-      fprintf (stderr, "%s: %s\n", node, gai_strerror (err));
+      syslog (LOG_ERR, "%s: %s\n", node, gai_strerror (err));
       errno = 0;
       return -1;
     }
@@ -623,7 +653,7 @@ main (int argc, char *argv[])
   double opt_double;
   char *p;
 
-  while ((opt = getopt (argc, argv, "w:i:s:d:t:nN46vh")) != -1)
+  while ((opt = getopt (argc, argv, "w:i:s:d:t:nN46vVh")) != -1)
     {
       switch (opt)
 	{
@@ -636,6 +666,7 @@ main (int argc, char *argv[])
 	    }
 	  ctx_opt.timeout = dtots (opt_double);
 	  break;
+
 	case 'i':
 	  opt_double = strtod (optarg, &p);
 	  if (p == optarg || *p != '\0')
@@ -645,6 +676,7 @@ main (int argc, char *argv[])
 	    }
 	  ctx_opt.interval = dtots (opt_double);
 	  break;
+
 	case 's':
 	  opt_long = strtol (optarg, &p, 0);
 	  if (p == optarg || *p != '\0')
@@ -701,19 +733,40 @@ main (int argc, char *argv[])
 	  break;
 
 	case 'v':
+	  ctx_opt.verbose++;
+	  break;
+
+	case 'e':
+	  ctx_opt.pstderr = 1;
+	  break;
+
+	case 'E':
+	  ctx_opt.pstderr = 0;
+	  break;
+
+	case 'V':
 	  print_version (stdout, argc, argv);
 	  exit (EXIT_SUCCESS);
+
 	case 'h':
 	  print_version (stdout, argc, argv);
 	  print_usage (stdout, argc, argv);
 	  exit (EXIT_SUCCESS);
+
 	default:
 	  exit (EXIT_FAILURE);
 	}
     }
 
+  int logflag = LOG_PID;
+  if (ctx_opt.pstderr)
+    logflag |= LOG_PERROR;
+  openlog (NULL, logflag, LOG_USER);
+  setloglevel (ctx_opt.verbose);
+
   if (!ctx_opt.ipv4 && !ctx_opt.ipv6)
     {
+      syslog (LOG_INFO, "-4 nor -6 is not specified, imply -4 and -6");
       ctx_opt.ipv4 = 1;
       ctx_opt.ipv6 = 1;
     }
@@ -722,7 +775,7 @@ main (int argc, char *argv[])
       ctx_opt.data = malloc (ctx_opt.datalen);
       if (ctx_opt.data == NULL)
 	{
-	  perror ("malloc");
+	  syslog (LOG_CRIT, "malloc: %s", strerror (errno));
 	  exit (EXIT_FAILURE);
 	}
       // fill in by ascii printables
@@ -731,7 +784,7 @@ main (int argc, char *argv[])
     }
   if (ping_context_new (&ctx, &ctx_opt) == -1)
     {
-      perror ("ping_context_new");
+      syslog (LOG_CRIT, "ping_context_new: %s", strerror (errno));
       exit (EXIT_FAILURE);
     }
   ctx.infolen = argc - optind;
@@ -749,7 +802,7 @@ main (int argc, char *argv[])
 	   ctx.opt.numeric_parse) == -1)
 	{
 	  if (errno)
-	    perror (argv[optind + i]);
+	    syslog (LOG_CRIT, "%s: %s", argv[optind + i], strerror (errno));
 	  exit (EXIT_FAILURE);
 	}
     }
@@ -764,7 +817,7 @@ main (int argc, char *argv[])
 
       if (timerfd_settime (ctx.intervalfd, 0, &it_in, NULL) == -1)
 	{
-	  perror ("timerfd_settime");
+	  syslog (LOG_CRIT, "timerfd_settime: %s", strerror (errno));
 	  exitcode = EXIT_FAILURE;
 	  break;
 	}
@@ -803,7 +856,7 @@ main (int argc, char *argv[])
 	  int ret = select (nfds + 1, &rfds, NULL, NULL, NULL);
 	  if (ret == -1)
 	    {
-	      perror ("select");
+	      syslog (LOG_CRIT, "select: %s", strerror (errno));
 	      exitcode = EXIT_FAILURE;
 	      break;
 	    }
@@ -811,7 +864,7 @@ main (int argc, char *argv[])
 	  if (FD_ISSET (ctx.asyncnsfd, &rfds))
 	    {
 	      if (asyncns_wait (ctx.asyncns, 0) < 0)
-		perror ("asyncns_wait");
+		syslog (LOG_CRIT, "asyncns_wait: %s", strerror (errno));
 	      else
 		{
 		  asyncns_query_t *query;
@@ -831,13 +884,13 @@ main (int argc, char *argv[])
 	      int ret = read (ctx.intervalfd, &count, sizeof (count));
 	      if (ret == -1)
 		{
-		  perror ("read");
+		  syslog (LOG_CRIT, "read: %s", strerror (errno));
 		  exitcode = EXIT_FAILURE;
 		  break;
 		}
 	      if (ret != sizeof (count))
 		{
-		  fprintf (stderr, "FATAL ERROR while reading timer\n");
+		  syslog (LOG_CRIT, "while reading timer");
 		  exitcode = EXIT_FAILURE;
 		  break;
 		}
@@ -856,7 +909,8 @@ main (int argc, char *argv[])
 		      if (timerfd_settime (ctx.timeoutfd, 0, &it_to, NULL) ==
 			  -1)
 			{
-			  perror ("timerfd_settime");
+			  syslog (LOG_CRIT, "timerfd_settime: %s",
+				  strerror (errno));
 			  exitcode = EXIT_FAILURE;
 			  break;
 			}
@@ -865,7 +919,8 @@ main (int argc, char *argv[])
 
 		  if (icmp_echo_send (&ctx) == -1)
 		    {
-		      perror ("icmp_echo_send");
+		      syslog (LOG_CRIT, "icmp_echo_send: %s",
+			      strerror (errno));
 		      exitcode = EXIT_FAILURE;
 		      break;
 		    }
@@ -894,7 +949,8 @@ main (int argc, char *argv[])
 		{
 		  if (errno == EAGAIN)
 		    goto next;
-		  perror ("icmp_echoreply_recv");
+		  syslog (LOG_CRIT, "icmp_echoreply_recv: %s",
+			  strerror (errno));
 		  break;
 		}
 	      ctx.info[idx].count_recv++;
@@ -908,7 +964,8 @@ main (int argc, char *argv[])
 		{
 		  if (errno == EAGAIN)
 		    goto next;
-		  perror ("icmp_echoreply_recv");
+		  syslog (LOG_CRIT, "icmp_echoreply_recv: %s",
+			  strerror (errno));
 		  break;
 		}
 	      ctx.info[idx].count_recv++;
